@@ -54,7 +54,8 @@ def _request(
         r.raise_for_status()
         data = r.json()
     if data.get("code", 0) != 0:
-        raise RuntimeError(data.get("msg", "请求失败"))
+        msg = data.get("msg") or ""
+        raise RuntimeError(msg.strip() or f"请求失败(code={data.get('code')})")
     return (data, None)
 
 
@@ -120,7 +121,7 @@ def create_file(
     err_on_conflict: bool | None = None,
 ) -> tuple[dict, RefreshedTokens]:
     """创建文件或文件夹。type 为 'file' 或 'folder'。若祖先目录不存在会自动创建。返回 (创建结果, 若刷新则返回新 token)。"""
-    payload = {"uri": uri, "type": type}
+    payload: dict[str, Any] = {"uri": uri, "type": type}
     if metadata is not None:
         payload["metadata"] = metadata
     if err_on_conflict is not None:
@@ -193,7 +194,8 @@ def upload_file_chunk(
         r.raise_for_status()
         data = r.json()
     if data.get("code", 0) != 0:
-        raise RuntimeError(data.get("msg", f"上传分块 {index} 失败"))
+        msg = data.get("msg") or ""
+        raise RuntimeError(msg.strip() or f"上传分块 {index} 失败(code={data.get('code')})")
     return (None, None)
 
 
