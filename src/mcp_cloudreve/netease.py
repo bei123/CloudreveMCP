@@ -185,7 +185,7 @@ def get_song_url(song_id: int | str, level: str = "lossless", cookie: str = "") 
 
 
 def get_song_with_best_url(keyword_or_id: str, cookie: str = "") -> dict | None:
-    """根据关键词或歌曲 ID 获取歌曲信息及最高可用音质下载链接。封面等元数据统一走 get_song_detail，不依赖搜索返回的 album。"""
+    """根据关键词或歌曲 ID 获取歌曲信息及最高可用音质下载链接。优先尝试无损音质，兜底次高音质、标准音质。封面等元数据统一走 get_song_detail。"""
     if keyword_or_id.strip().isdigit():
         song_id = int(keyword_or_id.strip())
         fallback = {"id": song_id, "name": "", "artists": [], "album": "", "pic_url": ""}
@@ -199,6 +199,7 @@ def get_song_with_best_url(keyword_or_id: str, cookie: str = "") -> dict | None:
     detail = get_song_detail(song_id, cookie=cookie)
     first = detail if detail else fallback
     pic_url = first.get("pic_url") or fallback.get("pic_url") or ""
+    # 优先无损 lossless，兜底极高 exhigh、标准 standard
     for level in ("lossless", "exhigh", "standard"):
         url_info = get_song_url(song_id, level=level, cookie=cookie)
         if url_info:
