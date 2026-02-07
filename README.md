@@ -52,7 +52,7 @@ uvx mcp-cloudreve
 | 变量 | 说明 |
 |------|------|
 | `PORT` | 服务端口，默认 `3001` |
-| `HOST` | 监听地址，默认 `127.0.0.1` |
+| `HOST` | 监听地址，默认 `0.0.0.0` |
 | `CLOUDREVE_BASE_URL` | Cloudreve API 根地址，默认 `https://cloudreve.2000gallery.art/api/v4` |
 
 ---

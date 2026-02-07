@@ -14,7 +14,7 @@ from . import cloudreve
 
 NAME = "cloudreve-sse-mcp"
 
-_host = os.environ.get("HOST", "127.0.0.1")
+_host = os.environ.get("HOST", "0.0.0.0")
 _port = int(os.environ.get("PORT", "3001"))
 
 mcp = FastMCP(
