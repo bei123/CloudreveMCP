@@ -1,0 +1,23 @@
+[project]
+name = "mcp-cloudreve"
+version = "1.0.0"
+description = "Cloudreve MCP server: login, upload, direct links. Run with uvx."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "mcp>=1.0.0",
+    "httpx>=0.27.0",
+    "starlette>=0.38.0",
+    "uvicorn>=0.30.0",
+    "sse-starlette>=2.0.0",
+]
+
+[project.scripts]
+mcp-cloudreve = "mcp_cloudreve.main:main"
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
