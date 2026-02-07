@@ -304,8 +304,10 @@ name = "mcp-cloudreve"
 version = "1.0.0"
 source = { editable = "." }
 dependencies = [
+    { name = "cryptography" },
     { name = "httpx" },
     { name = "mcp" },
+    { name = "mutagen" },
     { name = "sse-starlette" },
     { name = "starlette" },
     { name = "uvicorn" },
@@ -313,11 +315,22 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cryptography", specifier = ">=42.0.0" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "mcp", specifier = ">=1.0.0" },
+    { name = "mutagen", specifier = ">=1.47.0" },
     { name = "sse-starlette", specifier = ">=2.0.0" },
     { name = "starlette", specifier = ">=0.38.0" },
     { name = "uvicorn", specifier = ">=0.30.0" },
+]
+
+[[package]]
+name = "mutagen"
+version = "1.47.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/81/e6/64bc71b74eef4b68e61eb921dcf72dabd9e4ec4af1e11891bbd312ccbb77/mutagen-1.47.0.tar.gz", hash = "sha256:719fadef0a978c31b4cf3c956261b3c58b6948b32023078a2117b1de09f0fc99", size = 1274186, upload-time = "2023-09-03T16:33:33.411Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b0/7a/620f945b96be1f6ee357d211d5bf74ab1b7fe72a9f1525aafbfe3aee6875/mutagen-1.47.0-py3-none-any.whl", hash = "sha256:edd96f50c5907a9539d8e5bba7245f62c9f520aef333d13392a79a4f70aca719", size = 194391, upload-time = "2023-09-03T16:33:29.955Z" },
 ]
 
 [[package]]

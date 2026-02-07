@@ -1,6 +1,6 @@
 # Cloudreve MCP Server
 
-基于 MCP（Model Context Protocol）的 Cloudreve 工具服务端（Python），供 Cursor 等 MCP 客户端调用。**推荐流程**：登入网盘 → 解析抖音/哔哩哔哩链接 → 下载视频 → 上传到网盘（可返回直链）。使用 **uv** / **uvx** 启动。
+基于 MCP（Model Context Protocol）的 Cloudreve 工具服务端（Python），供 Cursor 等 MCP 客户端调用。**推荐流程**：登入网盘 → 解析抖音/哔哩哔哩链接或搜索网易云音乐 → 下载视频/歌曲 → 上传到网盘（可返回直链）。使用 **uv** / **uvx** 启动。
 
 ### 项目结构（src 布局）
 
@@ -18,7 +18,8 @@ CloudreveMCP/
         ├── server.py        # FastMCP 与工具注册
         ├── cloudreve.py     # Cloudreve API 客户端
         ├── douyin.py        # 抖音分享链接解析与无水印下载
-        └── bilibili.py      # 哔哩哔哩 WBI 签名、DASH/durl 下载（[参考](https://github.com/bei123/astrbot_plugin_so_vits_svc/blob/master/bilibili_api.py)）
+        ├── bilibili.py      # 哔哩哔哩 WBI 签名、DASH/durl 下载（[参考](https://github.com/bei123/astrbot_plugin_so_vits_svc/blob/master/bilibili_api.py)）
+        └── netease.py       # 网易云音乐搜索、eapi 加密、获取播放链接与下载（[参考](https://github.com/bei123/astrbot_plugin_so_vits_svc/blob/master/netease_api.py)）
 ```
 
 ---
@@ -117,6 +118,7 @@ uvx mcp-cloudreve
 2. **（可选）查存储策略**：调用 `cloudreve_list_storage_policies(access_token)`，取要用的策略 `id` 作为上传时的 `policy_id`。
 3. **抖音链接 → 网盘**：`cloudreve_upload_douyin_video(access_token, douyin_share_link, policy_id, ...)`。流程：解析抖音分享链接 → 下载无水印视频到临时文件 → 创建/确认文件夹 → 上传 → 删临时文件 → 返回直链。
 4. **哔哩哔哩链接 → 网盘**：`cloudreve_upload_bilibili_video(access_token, bilibili_share_link, policy_id, ..., cookie=...)`。流程：解析 BV 号 → 获取 WBI 签名与播放地址（DASH 或 durl）→ 下载到临时文件（DASH 会合并音视频，多段会合并）→ 创建/确认文件夹 → 上传 → 删临时文件 → 返回直链。**建议传 B 站 cookie**：未登录时画质通常只有 360p/480p，传入登录后的 cookie 可获取 1080p 等更高画质；需要登录才能看的视频也必须传 cookie。**需本机已安装 ffmpeg**（DASH 音视频合并、多段合并）。
+5. **网易云音乐 → 网盘**：`cloudreve_upload_netease_song(access_token, keyword_or_song_id, policy_id, ...)`。**MCP 流程**：根据关键词或歌曲 ID 搜索/获取歌曲 → 获取最佳可用音质链接（无损/极高/标准）→ 下载到临时文件 → **将封面图（JPG）嵌入音频元数据（MP3 ID3 / FLAC picture）** → 创建/确认文件夹 → 上传 → 删临时文件 → 返回直链。可选传 `netease_cookie` 以获取更高音质（如无损）；返回中含 `cover_url` 供展示。
 
 其他常用能力：
 
@@ -137,6 +139,7 @@ uvx mcp-cloudreve
   - `cloudreve_create_direct_links` — 为指定文件 URI 创建直链（可传 `refresh_token` 以自动刷新）
   - `cloudreve_upload_douyin_video` — 从抖音分享链接解析无水印视频、下载并上传到网盘，返回直链（可传 `folder_uri`、`refresh_token`、可选 `target_uri`）
   - `cloudreve_upload_bilibili_video` — 从哔哩哔哩链接解析 BV、下载视频（DASH/durl，需 ffmpeg）并上传到网盘，返回直链；**建议传 `cookie` 以获取高画质（1080p）**（可传 `folder_uri`、`refresh_token`、可选 `target_uri`）
+  - `cloudreve_upload_netease_song` — **MCP 流程**：关键词/歌曲 ID → 获取最佳音质链接 → 下载 → **封面图嵌入音频元数据** → 上传网盘 → 返回直链；可选传 `netease_cookie` 以获取更高音质（可传 `folder_uri`、`refresh_token`、可选 `target_uri`）
   - `echo` / `get_time` — 示例工具
 
 ---
@@ -149,3 +152,10 @@ uvx mcp-cloudreve
 - **POST** `http://localhost:3001/messages?session_id=<id>` → 发送 JSON-RPC 请求（Python MCP SDK 使用 `session_id` 查询参数）。
 
 适合使用平台提供的「SSE」模板、只需填一个 `url` 的场景；`url` 填 `http://localhost:3001/sse` 即可。
+
+
+<audio id="audio" controls="" preload="none">
+      <source id="mp3" src="https://cloudreve.2000gallery.art/f/Lvce/%E7%A6%BB%E5%BC%80%E6%88%91%E7%9A%84%E4%BE%9D%E8%B5%96%20-%20%E7%8E%8B%E8%89%B3%E8%96%87.mp3">
+</audio>
+
+<iframe frameborder="no" border="0" marginwidth="0" marginheight="0" width=330 height=86 src="//music.163.com/outchain/player?type=2&id=1488737309&auto=1&height=66"></iframe>

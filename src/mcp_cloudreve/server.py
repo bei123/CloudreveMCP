@@ -5,15 +5,20 @@ MCP 服务：Cloudreve 登录、上传、直链等工具。
 
 import base64
 import json
+import logging
 import os
+import re
 import tempfile
 import time
+
+logger = logging.getLogger(__name__)
 
 from mcp.server.fastmcp import FastMCP
 
 from . import bilibili
 from . import cloudreve
 from . import douyin
+from . import netease
 
 NAME = "cloudreve-sse-mcp"
 
@@ -558,6 +563,171 @@ def _cloudreve_upload_bilibili_video_impl(
             "size_bytes": size,
             "direct_link": direct_link,
         }
+        if refreshed or chunk_refreshed or link_refreshed:
+            final_refreshed = refreshed or chunk_refreshed or link_refreshed
+            if final_refreshed:
+                out["refreshed_tokens"] = {
+                    "access_token": final_refreshed["access_token"],
+                    "refresh_token": final_refreshed["refresh_token"],
+                    "access_expires": final_refreshed.get("access_expires"),
+                    "refresh_expires": final_refreshed.get("refresh_expires"),
+                }
+        return json.dumps(out, ensure_ascii=False, indent=2)
+    finally:
+        if tmp_path is not None:
+            try:
+                os.unlink(tmp_path)
+            except FileNotFoundError:
+                pass
+
+
+# ----- 网易云音乐：搜索/ID → 获取最佳音质链接 → 下载 → 上传网盘 → 直链 -----
+@mcp.tool()
+def cloudreve_upload_netease_song(
+    access_token: str,
+    keyword_or_song_id: str,
+    policy_id: str,
+    refresh_token: str = "",
+    folder_uri: str = "",
+    target_uri: str | None = None,
+    netease_cookie: str = "",
+) -> str:
+    """MCP 流程：登入网盘 → 根据关键词或歌曲 ID 获取网易云最佳音质链接 → 下载到临时文件 → 将封面图（JPG）嵌入音频元数据（MP3 ID3 / FLAC picture）→ 上传到网盘并返回直链。须先 cloudreve_login。keyword_or_song_id 可为搜索关键词或歌曲 ID（纯数字）。可选传 netease_cookie 以获取更高音质（如无损）。folder_uri 不传则默认 cloudreve://my/netease/{歌曲名 - 歌手}.mp3。返回中含 cover_url、direct_link。"""
+    try:
+        return _cloudreve_upload_netease_song_impl(
+            access_token=access_token,
+            keyword_or_song_id=keyword_or_song_id,
+            policy_id=policy_id,
+            refresh_token=refresh_token,
+            folder_uri=folder_uri,
+            target_uri=target_uri,
+            netease_cookie=netease_cookie,
+        )
+    except Exception as e:
+        return json.dumps({
+            "status": "error",
+            "error": str(e) or repr(e),
+            "error_type": type(e).__name__,
+        }, ensure_ascii=False, indent=2)
+
+
+def _cloudreve_upload_netease_song_impl(
+    access_token: str,
+    keyword_or_song_id: str,
+    policy_id: str,
+    refresh_token: str,
+    folder_uri: str,
+    target_uri: str | None,
+    netease_cookie: str,
+) -> str:
+    info = netease.get_song_with_best_url(keyword_or_song_id, cookie=netease_cookie or None)
+    if not info or not info.get("url"):
+        raise RuntimeError("未获取到歌曲或下载链接")
+    name = (info.get("name") or "未知").strip()
+    artists = info.get("artists") or []
+    safe = re.sub(r'[\\/:*?"<>|]', "", f"{name} - {', '.join(artists) if artists else '未知'}".strip() or "song")
+    filename = f"{safe}.mp3"
+
+    tmp_path = None
+    try:
+        tmp = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
+        tmp_path = tmp.name
+        tmp.close()
+        # 1) 下载音频到临时文件
+        netease.download_netease_song_to_path(info["url"], tmp_path)
+        # 2) 上传到网盘前，先将封面图（JPG）嵌入音频元数据（MP3 ID3 / FLAC picture）
+        pic_url = info.get("pic_url") or ""
+        cover_embedded = False
+        cover_embed_error: str | None = None
+        if pic_url:
+            try:
+                logger.info("网易云上传：正在将封面嵌入音频 %s", tmp_path)
+                netease.embed_cover_into_audio(tmp_path, pic_url)
+                cover_embedded = True
+                logger.info("网易云上传：封面嵌入成功")
+            except Exception as e:
+                cover_embed_error = str(e) or type(e).__name__
+                logger.warning("网易云上传：封面嵌入失败 - %s", cover_embed_error, exc_info=True)
+        else:
+            logger.debug("网易云上传：无封面 URL，跳过嵌入")
+        # 3) 嵌封面后重新取大小，再创建上传会话并分块上传
+        size = os.path.getsize(tmp_path)
+
+        rft = refresh_token or None
+        if (target_uri or "").strip():
+            uri = (target_uri or "").strip()
+        elif (folder_uri or "").strip():
+            folder = folder_uri.strip().rstrip("/")
+            if folder.startswith("cloudreve://") and "/" not in folder[len("cloudreve://"):]:
+                folder = f"cloudreve://my/{folder[len('cloudreve://'):]}"
+            _, folder_refreshed = cloudreve.create_file(
+                access_token, folder, "folder",
+                refresh_token=rft, err_on_conflict=False,
+            )
+            if folder_refreshed:
+                access_token = folder_refreshed["access_token"]
+                rft = folder_refreshed.get("refresh_token")
+            uri = f"{folder}/{filename}"
+        else:
+            folder = "cloudreve://my/netease"
+            _, folder_refreshed = cloudreve.create_file(
+                access_token, folder, "folder",
+                refresh_token=rft, err_on_conflict=False,
+            )
+            if folder_refreshed:
+                access_token = folder_refreshed["access_token"]
+                rft = folder_refreshed.get("refresh_token")
+            uri = f"{folder}/{filename}"
+        refreshed = chunk_refreshed = link_refreshed = None
+        session_data, refreshed = cloudreve.create_upload_session(
+            access_token, uri, size, policy_id,
+            refresh_token=rft,
+            mime_type="audio/mpeg",
+        )
+        if refreshed:
+            access_token = refreshed["access_token"]
+            rft = refreshed.get("refresh_token")
+        chunk_size = session_data["chunk_size"] or size
+        if chunk_size <= 0:
+            chunk_size = size
+        session_id = session_data["session_id"]
+        index = 0
+        with open(tmp_path, "rb") as f:
+            for offset in range(0, size, chunk_size):
+                chunk = f.read(chunk_size)
+                _, chunk_refreshed = cloudreve.upload_file_chunk(
+                    access_token, session_id, index, chunk,
+                    refresh_token=rft,
+                )
+                if chunk_refreshed:
+                    access_token = chunk_refreshed["access_token"]
+                    rft = chunk_refreshed.get("refresh_token")
+                index += 1
+
+        direct_link = ""
+        try:
+            links, link_refreshed = cloudreve.create_direct_links(access_token, [uri], refresh_token=rft)
+            if link_refreshed:
+                access_token = link_refreshed["access_token"]
+                rft = link_refreshed.get("refresh_token")
+            if links and links[0].get("link"):
+                direct_link = links[0]["link"]
+        except Exception as e:
+            direct_link = f"（获取直链失败：{e}）"
+
+        out = {
+            "status": "success",
+            "song_id": info.get("id"),
+            "name": name,
+            "artists": artists,
+            "cover_url": info.get("pic_url") or "",
+            "cover_embedded": cover_embedded,
+            "target_uri": uri,
+            "size_bytes": size,
+            "direct_link": direct_link,
+        }
+        if cover_embed_error is not None:
+            out["cover_embed_error"] = cover_embed_error
         if refreshed or chunk_refreshed or link_refreshed:
             final_refreshed = refreshed or chunk_refreshed or link_refreshed
             if final_refreshed:
