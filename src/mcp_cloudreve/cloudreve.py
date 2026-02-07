@@ -171,7 +171,7 @@ def upload_file_chunk(
     *,
     refresh_token: str | None = None,
 ) -> tuple[None, RefreshedTokens]:
-    """上传一个分块。若因 token 过期返回 401 且提供了 refresh_token，则自动刷新后重试。"""
+    """上传一个分块。API 要求：除最后一块外，Content-Length 必须与创建会话时的 chunk_size 一致；最后一块可更小。分块须按 index 从 0 起顺序上传。若 401 且提供 refresh_token 则自动刷新后重试。"""
     url = f"{_base_url()}/file/upload/{session_id}/{index}"
     headers = {
         "Authorization": f"Bearer {access_token}",

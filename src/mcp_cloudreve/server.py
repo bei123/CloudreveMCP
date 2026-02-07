@@ -11,6 +11,7 @@ import time
 
 from mcp.server.fastmcp import FastMCP
 
+from . import bilibili
 from . import cloudreve
 from . import douyin
 
@@ -411,6 +412,147 @@ def _cloudreve_upload_douyin_video_impl(
         out = {
             "status": "success",
             "video_id": video_id,
+            "title": title,
+            "target_uri": uri,
+            "size_bytes": size,
+            "direct_link": direct_link,
+        }
+        if refreshed or chunk_refreshed or link_refreshed:
+            final_refreshed = refreshed or chunk_refreshed or link_refreshed
+            if final_refreshed:
+                out["refreshed_tokens"] = {
+                    "access_token": final_refreshed["access_token"],
+                    "refresh_token": final_refreshed["refresh_token"],
+                    "access_expires": final_refreshed.get("access_expires"),
+                    "refresh_expires": final_refreshed.get("refresh_expires"),
+                }
+        return json.dumps(out, ensure_ascii=False, indent=2)
+    finally:
+        if tmp_path is not None:
+            try:
+                os.unlink(tmp_path)
+            except FileNotFoundError:
+                pass
+
+
+# ----- 哔哩哔哩：解析 → 下载 → 上传网盘 → 直链 -----
+@mcp.tool()
+def cloudreve_upload_bilibili_video(
+    access_token: str,
+    bilibili_share_link: str,
+    policy_id: str,
+    refresh_token: str = "",
+    folder_uri: str = "",
+    target_uri: str | None = None,
+    cookie: str = "",
+) -> str:
+    """MCP 流程：登入网盘 → 解析哔哩哔哩链接 → 下载视频（DASH/durl）→ 上传到网盘。本工具完成后三步；须先 cloudreve_login。未登录时画质通常只有 360p/480p，建议传 B 站 cookie 以获取 1080p 等更高画质；cookie 也会用于获取播放地址和下载音视频片段。DASH 流会合并音视频，多段 durl 会合并后上传，需本机安装 ffmpeg。folder_uri 不传则默认 cloudreve://my/bilibili/{bvid}.mp4。"""
+    try:
+        return _cloudreve_upload_bilibili_video_impl(
+            access_token=access_token,
+            bilibili_share_link=bilibili_share_link,
+            policy_id=policy_id,
+            refresh_token=refresh_token,
+            folder_uri=folder_uri,
+            target_uri=target_uri,
+            cookie=cookie,
+        )
+    except Exception as e:
+        return json.dumps({
+            "status": "error",
+            "error": str(e) or repr(e),
+            "error_type": type(e).__name__,
+        }, ensure_ascii=False, indent=2)
+
+
+def _cloudreve_upload_bilibili_video_impl(
+    access_token: str,
+    bilibili_share_link: str,
+    policy_id: str,
+    refresh_token: str,
+    folder_uri: str,
+    target_uri: str | None,
+    cookie: str,
+) -> str:
+    parsed = bilibili.parse_bilibili_share_url(bilibili_share_link)
+    bvid = parsed["bvid"]
+    info = bilibili.get_video_info(bvid, cookie=cookie or None)
+    title = info.get("title", "")
+
+    tmp_path = None
+    try:
+        tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+        tmp_path = tmp.name
+        tmp.close()
+        bilibili.download_bilibili_video_to_path(bvid, tmp_path, cookie=cookie or None)
+        size = os.path.getsize(tmp_path)
+
+        rft = refresh_token or None
+        if (target_uri or "").strip():
+            uri = (target_uri or "").strip()
+        elif (folder_uri or "").strip():
+            folder = folder_uri.strip().rstrip("/")
+            if folder.startswith("cloudreve://") and "/" not in folder[len("cloudreve://"):]:
+                folder = f"cloudreve://my/{folder[len('cloudreve://'):]}"
+            _, folder_refreshed = cloudreve.create_file(
+                access_token, folder, "folder",
+                refresh_token=rft, err_on_conflict=False,
+            )
+            if folder_refreshed:
+                access_token = folder_refreshed["access_token"]
+                rft = folder_refreshed.get("refresh_token")
+            uri = f"{folder}/{bvid}.mp4"
+        else:
+            folder = "cloudreve://my/bilibili"
+            _, folder_refreshed = cloudreve.create_file(
+                access_token, folder, "folder",
+                refresh_token=rft, err_on_conflict=False,
+            )
+            if folder_refreshed:
+                access_token = folder_refreshed["access_token"]
+                rft = folder_refreshed.get("refresh_token")
+            uri = f"{folder}/{bvid}.mp4"
+        refreshed = chunk_refreshed = link_refreshed = None
+        session_data, refreshed = cloudreve.create_upload_session(
+            access_token, uri, size, policy_id,
+            refresh_token=rft,
+            mime_type="video/mp4",
+        )
+        if refreshed:
+            access_token = refreshed["access_token"]
+            rft = refreshed.get("refresh_token")
+        chunk_size = session_data["chunk_size"] or size
+        if chunk_size <= 0:
+            chunk_size = size
+        session_id = session_data["session_id"]
+        index = 0
+        with open(tmp_path, "rb") as f:
+            for offset in range(0, size, chunk_size):
+                chunk = f.read(chunk_size)
+                _, chunk_refreshed = cloudreve.upload_file_chunk(
+                    access_token, session_id, index, chunk,
+                    refresh_token=rft,
+                )
+                if chunk_refreshed:
+                    access_token = chunk_refreshed["access_token"]
+                    rft = chunk_refreshed.get("refresh_token")
+                index += 1
+
+        link_refreshed = None
+        direct_link = ""
+        try:
+            links, link_refreshed = cloudreve.create_direct_links(access_token, [uri], refresh_token=rft)
+            if link_refreshed:
+                access_token = link_refreshed["access_token"]
+                rft = link_refreshed.get("refresh_token")
+            if links and links[0].get("link"):
+                direct_link = links[0]["link"]
+        except Exception as e:
+            direct_link = f"（获取直链失败：{e}）"
+
+        out = {
+            "status": "success",
+            "bvid": bvid,
             "title": title,
             "target_uri": uri,
             "size_bytes": size,

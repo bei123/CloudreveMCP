@@ -1,6 +1,6 @@
 # Cloudreve MCP Server
 
-基于 MCP（Model Context Protocol）的 Cloudreve 工具服务端（Python），供 Cursor 等 MCP 客户端调用。**推荐流程**：登入网盘 → 解析抖音链接 → 下载视频 → 上传到网盘（可返回直链）。使用 **uv** / **uvx** 启动。
+基于 MCP（Model Context Protocol）的 Cloudreve 工具服务端（Python），供 Cursor 等 MCP 客户端调用。**推荐流程**：登入网盘 → 解析抖音/哔哩哔哩链接 → 下载视频 → 上传到网盘（可返回直链）。使用 **uv** / **uvx** 启动。
 
 ### 项目结构（src 布局）
 
@@ -17,7 +17,8 @@ CloudreveMCP/
         ├── main.py          # 入口逻辑，mcp.run(sse)
         ├── server.py        # FastMCP 与工具注册
         ├── cloudreve.py     # Cloudreve API 客户端
-        └── douyin.py        # 抖音分享链接解析与无水印下载
+        ├── douyin.py        # 抖音分享链接解析与无水印下载
+        └── bilibili.py      # 哔哩哔哩 WBI 签名、DASH/durl 下载（[参考](https://github.com/bei123/astrbot_plugin_so_vits_svc/blob/master/bilibili_api.py)）
 ```
 
 ---
@@ -55,6 +56,12 @@ uvx mcp-cloudreve
 | `PORT` | 服务端口，默认 `3001` |
 | `HOST` | 监听地址，默认 `0.0.0.0` |
 | `CLOUDREVE_BASE_URL` | Cloudreve API 根地址，默认 `https://cloudreve.2000gallery.art/api/v4` |
+
+**上传大文件若出现 413 Request Entity Too Large**：  
+分块大小由 Cloudreve 创建会话时返回的 `chunk_size` 决定，客户端**必须**按该大小上传每个分块（不能改小），否则会报 Invalid Content-Length。413 表示**请求体超过了 Cloudreve 或反向代理（如 Nginx）的请求体上限**，需要由服务端/运维调大限制，本 MCP 无法绕过。
+
+- **若你自建 Cloudreve 且前面有 Nginx**：在 Nginx 配置里（`http`、`server` 或 `location` 中）增加或修改：`client_max_body_size 200m;`（或更大，需 ≥ 单块大小），然后 `nginx -s reload`。
+- **若使用他人提供的 Cloudreve（如 cloudreve.2000gallery.art）**：需联系站点管理员提高 API 或反向代理的请求体上限；或改用你自己能改 Nginx/配置的 Cloudreve 实例。
 
 ---
 
@@ -104,11 +111,12 @@ uvx mcp-cloudreve
 
 ### 3. 使用方式
 
-**MCP 推荐流程（抖音视频进网盘）：**
+**MCP 推荐流程（抖音/哔哩哔哩视频进网盘）：**
 
 1. **登入网盘**：调用 `cloudreve_login`（邮箱、密码；若站点开验证码需先 `cloudreve_get_captcha`），拿到 `access_token` 与 `refresh_token`。
 2. **（可选）查存储策略**：调用 `cloudreve_list_storage_policies(access_token)`，取要用的策略 `id` 作为上传时的 `policy_id`。
-3. **抖音链接 → 网盘**：调用 `cloudreve_upload_douyin_video(access_token, douyin_share_link, policy_id, refresh_token=..., folder_uri=...)`。工具会依次：**解析抖音分享链接** → **下载无水印视频到临时文件** → **在网盘创建/确认文件夹** → **上传到网盘** → **删除临时文件** → **返回直链**。
+3. **抖音链接 → 网盘**：`cloudreve_upload_douyin_video(access_token, douyin_share_link, policy_id, ...)`。流程：解析抖音分享链接 → 下载无水印视频到临时文件 → 创建/确认文件夹 → 上传 → 删临时文件 → 返回直链。
+4. **哔哩哔哩链接 → 网盘**：`cloudreve_upload_bilibili_video(access_token, bilibili_share_link, policy_id, ..., cookie=...)`。流程：解析 BV 号 → 获取 WBI 签名与播放地址（DASH 或 durl）→ 下载到临时文件（DASH 会合并音视频，多段会合并）→ 创建/确认文件夹 → 上传 → 删临时文件 → 返回直链。**建议传 B 站 cookie**：未登录时画质通常只有 360p/480p，传入登录后的 cookie 可获取 1080p 等更高画质；需要登录才能看的视频也必须传 cookie。**需本机已安装 ffmpeg**（DASH 音视频合并、多段合并）。
 
 其他常用能力：
 
@@ -127,7 +135,8 @@ uvx mcp-cloudreve
   - `cloudreve_upload_file_chunk` — 上传单个分块（可传 `refresh_token` 以自动刷新）
   - `cloudreve_upload_file` — 上传整个文件（支持本地路径或 Base64），上传后自动获取直链（可传 `refresh_token` 以自动刷新）
   - `cloudreve_create_direct_links` — 为指定文件 URI 创建直链（可传 `refresh_token` 以自动刷新）
-  - `cloudreve_upload_douyin_video` — 从抖音分享链接解析无水印视频、下载并上传到网盘，返回直链（可传 `folder_uri` 统一上传到指定文件夹、`refresh_token`、可选 `target_uri`）
+  - `cloudreve_upload_douyin_video` — 从抖音分享链接解析无水印视频、下载并上传到网盘，返回直链（可传 `folder_uri`、`refresh_token`、可选 `target_uri`）
+  - `cloudreve_upload_bilibili_video` — 从哔哩哔哩链接解析 BV、下载视频（DASH/durl，需 ffmpeg）并上传到网盘，返回直链；**建议传 `cookie` 以获取高画质（1080p）**（可传 `folder_uri`、`refresh_token`、可选 `target_uri`）
   - `echo` / `get_time` — 示例工具
 
 ---
