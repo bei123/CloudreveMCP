@@ -481,7 +481,7 @@ def _cloudreve_upload_bilibili_video_impl(
 ) -> str:
     parsed = bilibili.parse_bilibili_share_url(bilibili_share_link)
     bvid = parsed["bvid"]
-    info = bilibili.get_video_info(bvid, cookie=cookie or None)
+    info = bilibili.get_video_info(bvid, cookie=cookie or "")
     title = info.get("title", "")
 
     tmp_path = None
@@ -489,7 +489,7 @@ def _cloudreve_upload_bilibili_video_impl(
         tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
         tmp_path = tmp.name
         tmp.close()
-        bilibili.download_bilibili_video_to_path(bvid, tmp_path, cookie=cookie or None)
+        bilibili.download_bilibili_video_to_path(bvid, tmp_path, cookie=cookie or "")
         size = os.path.getsize(tmp_path)
 
         rft = refresh_token or None
@@ -620,7 +620,7 @@ def _cloudreve_upload_netease_song_impl(
     target_uri: str | None,
     netease_cookie: str,
 ) -> str:
-    info = netease.get_song_with_best_url(keyword_or_song_id, cookie=netease_cookie or None)
+    info = netease.get_song_with_best_url(keyword_or_song_id, cookie=netease_cookie or "")
     if not info or not info.get("url"):
         raise RuntimeError("未获取到歌曲或下载链接")
     name = (info.get("name") or "未知").strip()
@@ -642,9 +642,11 @@ def _cloudreve_upload_netease_song_impl(
         if pic_url:
             try:
                 logger.info("网易云上传：正在将封面嵌入音频 %s", tmp_path)
-                netease.embed_cover_into_audio(tmp_path, pic_url)
-                cover_embedded = True
-                logger.info("网易云上传：封面嵌入成功")
+                cover_embedded = netease.embed_cover_into_audio(tmp_path, pic_url)
+                if cover_embedded:
+                    logger.info("网易云上传：封面嵌入成功")
+                else:
+                    logger.info("网易云上传：跳过嵌入（格式不支持或无有效封面）")
             except Exception as e:
                 cover_embed_error = str(e) or type(e).__name__
                 logger.warning("网易云上传：封面嵌入失败 - %s", cover_embed_error, exc_info=True)

@@ -34,7 +34,7 @@ def _encrypt_params(url_path: str, payload: dict) -> str:
     url2 = url_path.replace("/eapi/", "/api/")
     digest = _hash_hex_digest(f"nobody{url2}use{json.dumps(payload)}md5forencrypt")
     params_str = f"{url2}-36cd479b6b5-{json.dumps(payload)}-36cd479b6b5-{digest}"
-    padder = PKCS7(algorithms.AES.block_size).padder()
+    padder = PKCS7(16).padder()  # AES block size in bytes
     padded = padder.update(params_str.encode()) + padder.finalize()
     cipher = Cipher(algorithms.AES(AES_KEY), modes.ECB())
     encryptor = cipher.encryptor()
@@ -224,23 +224,27 @@ def download_netease_song_to_path(url: str, path: str) -> int:
 
 
 def _detect_audio_format(path: str) -> str | None:
-    """根据文件头判断格式：'mp3' 或 'flac'。"""
+    """根据文件头判断格式：'mp3'、'flac' 或 'm4a'（MP4 容器）。"""
     with open(path, "rb") as f:
-        head = f.read(12)
-    if len(head) < 4:
+        head = f.read(16)
+    if len(head) < 8:
         return None
     if head.startswith(b"fLaC"):
         return "flac"
     if head.startswith(b"ID3") or (head[0] == 0xFF and (head[1] & 0xE0) == 0xE0):
         return "mp3"
+    # MP4/M4A: 前 4 字节为 box 长度，接着 4 字节为类型，常见为 ftyp
+    if head[4:8] == b"ftyp":
+        return "m4a"
     return None
 
 
-def embed_cover_into_audio(audio_path: str, cover_url: str) -> None:
-    """将封面图写入音频文件元数据（MP3 用 ID3 APIC，FLAC 用 picture）。封面从 cover_url 下载。失败时记录日志并抛出异常。"""
+def embed_cover_into_audio(audio_path: str, cover_url: str) -> bool:
+    """将封面图写入音频文件元数据（MP3 用 ID3 APIC，FLAC 用 picture）。封面从 cover_url 下载。
+    返回 True 表示已嵌入，False 表示跳过（格式不支持等）；下载或写入失败时抛异常。"""
     if not cover_url or not cover_url.strip().startswith("http"):
         logger.debug("embed_cover: 无效或非 http 封面 URL，跳过")
-        return
+        return False
     try:
         with httpx.Client(timeout=15.0, follow_redirects=True) as client:
             r = client.get(cover_url)
@@ -251,7 +255,7 @@ def embed_cover_into_audio(audio_path: str, cover_url: str) -> None:
         raise
     if not cover_data or len(cover_data) < 50:
         logger.warning("embed_cover: 封面数据为空或过短 (%s bytes)", len(cover_data) if cover_data else 0)
-        return
+        return False
     # 只接受真实图片：JPG/JPEG（网易云封面多为 jpg）或 PNG，MIME 用标准 image/jpeg / image/png
     if cover_data[:2] == b"\xff\xd8":
         mime = "image/jpeg"  # .jpg / .jpeg
@@ -259,11 +263,11 @@ def embed_cover_into_audio(audio_path: str, cover_url: str) -> None:
         mime = "image/png"
     else:
         logger.warning("embed_cover: 封面非 JPEG/PNG，前 8 字节 %s", cover_data[:8].hex() if len(cover_data) >= 8 else "不足")
-        return
+        return False
     fmt = _detect_audio_format(audio_path)
     if not fmt:
         logger.warning("embed_cover: 无法识别音频格式 %s", audio_path)
-        return
+        return False
     try:
         if fmt == "flac":
             from mutagen.flac import FLAC, Picture
@@ -278,9 +282,19 @@ def embed_cover_into_audio(audio_path: str, cover_url: str) -> None:
             flac.add_picture(pic)
             flac.save()
             logger.debug("embed_cover: FLAC 封面写入成功")
-            return
+            return True
+        if fmt == "m4a":
+            from mutagen.mp4 import MP4, MP4Cover
+
+            audio = MP4(audio_path)
+            fmt_cover = MP4Cover.FORMAT_JPEG if mime == "image/jpeg" else MP4Cover.FORMAT_PNG
+            audio["covr"] = [MP4Cover(cover_data, fmt_cover)]
+            audio.save()
+            logger.debug("embed_cover: M4A 封面写入成功")
+            return True
         # MP3：有 ID3 则直接改，无 ID3 则手动在文件头前插入 ID3 块
-        from mutagen.id3 import APIC, ID3
+        from mutagen.id3 import ID3
+        from mutagen.id3._frames import APIC
 
         apic = APIC(encoding=3, mime=mime, type=3, desc="Cover", data=cover_data)
         try:
@@ -291,7 +305,7 @@ def embed_cover_into_audio(audio_path: str, cover_url: str) -> None:
             tags.add(apic)
             tags.save(audio_path)
             logger.debug("embed_cover: MP3 已有 ID3，封面写入成功")
-            return
+            return True
         # 无 ID3：新建 ID3，写入内存，再拼到原文件前面
         tags = ID3()
         tags.add(apic)
@@ -306,6 +320,7 @@ def embed_cover_into_audio(audio_path: str, cover_url: str) -> None:
             f.write(id3_bytes)
             f.write(audio_bytes)
         logger.debug("embed_cover: MP3 无 ID3，已插入 ID3 封面块")
+        return True
     except Exception as e:
         logger.warning("embed_cover: 写入元数据失败 %s - %s", audio_path, e, exc_info=True)
         raise

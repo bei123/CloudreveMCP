@@ -152,10 +152,3 @@ uvx mcp-cloudreve
 - **POST** `http://localhost:3001/messages?session_id=<id>` → 发送 JSON-RPC 请求（Python MCP SDK 使用 `session_id` 查询参数）。
 
 适合使用平台提供的「SSE」模板、只需填一个 `url` 的场景；`url` 填 `http://localhost:3001/sse` 即可。
-
-
-<audio id="audio" controls="" preload="none">
-      <source id="mp3" src="https://cloudreve.2000gallery.art/f/Lvce/%E7%A6%BB%E5%BC%80%E6%88%91%E7%9A%84%E4%BE%9D%E8%B5%96%20-%20%E7%8E%8B%E8%89%B3%E8%96%87.mp3">
-</audio>
-
-<iframe frameborder="no" border="0" marginwidth="0" marginheight="0" width=330 height=86 src="//music.163.com/outchain/player?type=2&id=1488737309&auto=1&height=66"></iframe>
