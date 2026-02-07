@@ -1,6 +1,6 @@
 # Cloudreve MCP Server
 
-基于 MCP（Model Context Protocol）的 Cloudreve 工具服务端（Python），提供登录、上传、直链等能力，供 Cursor 等 MCP 客户端调用。使用 **uv** / **uvx** 启动。
+基于 MCP（Model Context Protocol）的 Cloudreve 工具服务端（Python），供 Cursor 等 MCP 客户端调用。**推荐流程**：登入网盘 → 解析抖音链接 → 下载视频 → 上传到网盘（可返回直链）。使用 **uv** / **uvx** 启动。
 
 ### 项目结构（src 布局）
 
@@ -16,7 +16,8 @@ CloudreveMCP/
         ├── __main__.py      # python -m mcp_cloudreve
         ├── main.py          # 入口逻辑，mcp.run(sse)
         ├── server.py        # FastMCP 与工具注册
-        └── cloudreve.py     # Cloudreve API 客户端
+        ├── cloudreve.py     # Cloudreve API 客户端
+        └── douyin.py        # 抖音分享链接解析与无水印下载
 ```
 
 ---
@@ -103,18 +104,30 @@ uvx mcp-cloudreve
 
 ### 3. 使用方式
 
-- 在对话中让 AI 调用 Cloudreve 相关工具即可，例如：
-  - **登录**：先让 AI 调用 `cloudreve_login`（邮箱、密码；若站点开验证码需先 `cloudreve_get_captcha`）。
-  - **上传**：登录后让 AI 调用 `cloudreve_upload_file`（本地路径或 Base64 + 目标 URI + `policy_id`），上传完成后会自动尝试获取直链并返回。
-  - **直链**：可单独调用 `cloudreve_create_direct_links`（传入文件 URI 列表）为已有文件创建直链。
+**MCP 推荐流程（抖音视频进网盘）：**
+
+1. **登入网盘**：调用 `cloudreve_login`（邮箱、密码；若站点开验证码需先 `cloudreve_get_captcha`），拿到 `access_token` 与 `refresh_token`。
+2. **（可选）查存储策略**：调用 `cloudreve_list_storage_policies(access_token)`，取要用的策略 `id` 作为上传时的 `policy_id`。
+3. **抖音链接 → 网盘**：调用 `cloudreve_upload_douyin_video(access_token, douyin_share_link, policy_id, refresh_token=..., folder_uri=...)`。工具会依次：**解析抖音分享链接** → **下载无水印视频到临时文件** → **在网盘创建/确认文件夹** → **上传到网盘** → **删除临时文件** → **返回直链**。
+
+其他常用能力：
+
+- **刷新令牌**：access_token 过期时可调用 `cloudreve_refresh_token(refresh_token)`，或在需要 token 的工具中传入 `refresh_token`，接口返回 401 时会自动刷新并重试。
+- **上传本地/Base64 文件**：`cloudreve_upload_file`（本地路径或 Base64 + 目标 URI + `policy_id`），上传完成后会自动尝试获取直链。
+- **直链**：`cloudreve_create_direct_links`（传入文件 URI 列表）为已有文件创建直链。
+- **创建文件夹**：`cloudreve_create_folder(access_token, folder_uri)`，如 `cloudreve://my/douyin` 或 `cloudreve://douyin`（会自动补为 `cloudreve://my/douyin`）。
 
 - 工具列表（均在「先登录」前提下使用除验证码外的接口）：
   - `cloudreve_get_captcha` — 获取登录验证码（仅站点开启验证码时需要）
-  - `cloudreve_login` — 密码登录，返回 `access_token`
-  - `cloudreve_create_upload_session` — 创建上传会话
-  - `cloudreve_upload_file_chunk` — 上传单个分块
-  - `cloudreve_upload_file` — 上传整个文件（支持本地路径或 Base64），上传后自动获取直链
-  - `cloudreve_create_direct_links` — 为指定文件 URI 创建直链
+  - `cloudreve_login` — 密码登录，返回 `access_token`、`refresh_token`
+  - `cloudreve_refresh_token` — 使用 refresh_token 刷新，返回新的 access_token 与 refresh_token（[API 文档](https://cloudrevev4.apifox.cn/refresh-token-289504601e0)）
+  - `cloudreve_list_storage_policies` — 获取当前用户可用的存储策略列表（上传时 policy_id 填返回的 id）（[API 文档](https://cloudrevev4.apifox.cn/list-available-storage-policies-308312707e0)）
+  - `cloudreve_create_folder` — 在网盘创建文件夹（如 `cloudreve://my/douyin`），祖先目录不存在会自动创建（[API 文档](https://cloudrevev4.apifox.cn/create-file-300253321e0)）
+  - `cloudreve_create_upload_session` — 创建上传会话（可传 `refresh_token` 以自动刷新）
+  - `cloudreve_upload_file_chunk` — 上传单个分块（可传 `refresh_token` 以自动刷新）
+  - `cloudreve_upload_file` — 上传整个文件（支持本地路径或 Base64），上传后自动获取直链（可传 `refresh_token` 以自动刷新）
+  - `cloudreve_create_direct_links` — 为指定文件 URI 创建直链（可传 `refresh_token` 以自动刷新）
+  - `cloudreve_upload_douyin_video` — 从抖音分享链接解析无水印视频、下载并上传到网盘，返回直链（可传 `folder_uri` 统一上传到指定文件夹、`refresh_token`、可选 `target_uri`）
   - `echo` / `get_time` — 示例工具
 
 ---
