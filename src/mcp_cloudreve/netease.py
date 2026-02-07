@@ -12,7 +12,6 @@ logger = logging.getLogger(__name__)
 
 import httpx
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from cryptography.hazmat.primitives.padding import PKCS7
 
 AES_KEY = b"e82ckenh8dichen8"
 BASE_URL = "https://interface3.music.163.com"
@@ -30,12 +29,18 @@ def _hash_hex_digest(text: str) -> str:
     return _hex_digest(md5(text.encode("utf-8")).digest())
 
 
+def _pkcs7_pad(data: bytes, block_size: int = 16) -> bytes:
+    """PKCS7 填充至 block_size 的整数倍（若已对齐则补一整块）。"""
+    pad_len = block_size - (len(data) % block_size)
+    return data + bytes([pad_len] * pad_len)
+
+
 def _encrypt_params(url_path: str, payload: dict) -> str:
     url2 = url_path.replace("/eapi/", "/api/")
     digest = _hash_hex_digest(f"nobody{url2}use{json.dumps(payload)}md5forencrypt")
     params_str = f"{url2}-36cd479b6b5-{json.dumps(payload)}-36cd479b6b5-{digest}"
-    padder = PKCS7(16).padder()  # AES block size in bytes
-    padded = padder.update(params_str.encode()) + padder.finalize()
+    raw = params_str.encode("utf-8")
+    padded = _pkcs7_pad(raw, 16)
     cipher = Cipher(algorithms.AES(AES_KEY), modes.ECB())
     encryptor = cipher.encryptor()
     enc = encryptor.update(padded) + encryptor.finalize()
